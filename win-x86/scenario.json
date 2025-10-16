@@ -1,0 +1,11 @@
+{
+  "searchPaths": ["./ServerModelEncryptionMachine"],
+  "commands": [
+    { "type": "load", "path": "./ServerModelEncryptionMachine/WinSocketServer.dll", "alias": "WinSocket" },
+    { "type": "call", "alias": "WinSocket", "function": "OpenUsbkey" },
+    { "type": "call", "alias": "WinSocket", "function": "LgServer", "args": ["string=127.0.0.1", "ushort=8001", "int=8", "string=11111111"] },
+    { "type": "call", "alias": "WinSocket", "function": "CreateRand", "args": ["int=16", "StringBuilder[1024]="] },
+    { "type": "call", "alias": "WinSocket", "function": "LgoutServer" },
+    { "type": "unload", "alias": "WinSocket" }
+  ]
+}

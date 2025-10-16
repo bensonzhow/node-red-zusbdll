@@ -1,0 +1,48 @@
+命令范例
+
+OpenUsbkey: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEncryptionMachine\WinSocketServer.dll --function OpenUsbkey
+LgServer: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEncryptionMachine\WinSocketServer.dll --function LgServer --arg string=22.58.244.70 --arg ushort=8001 --arg int=8 --arg string=11111111
+LgoutServer: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEncryptionMachine\WinSocketServer.dll --function LgoutServer
+CreateRand: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEncryptionMachine\WinSocketServer.dll --function CreateRand --return int --arg int=16 --arg StringBuilder[1024]=
+脚本执行
+
+内容 scenario.json:
+{
+  "searchPaths": ["./EncryptionMachine/ServerModelEncryptionMachine"],
+  "commands": [
+    { "type": "load", "path": "./EncryptionMachine/ServerModelEncryptionMachine/WinSocketServer.dll", "alias": "WinSocket" },
+    { "type": "call", "alias": "WinSocket", "function": "OpenUsbkey" },
+    { "type": "call", "alias": "WinSocket", "function": "LgServer", "args": ["string=22.58.244.70", "ushort=8001", "int=8", "string=11111111"] },
+    { "type": "call", "alias": "WinSocket", "function": "CreateRand", "args": ["int=16", "StringBuilder[1024]="] },
+    { "type": "call", "alias": "WinSocket", "function": "LgoutServer" },
+    { "type": "unload", "alias": "WinSocket" }
+  ]
+}
+执行：UniversalDllLoader.exe run scenario.json
+返回解析
+
+成功调用示例输出：
+{
+  "succeeded": true,
+  "command": "LgServer",
+  "returnCode": 0,
+  "error": null,
+  "detail": null,
+  "outputs": []
+}
+带 StringBuilder 参数的输出：
+{
+  "succeeded": true,
+  "command": "CreateRand",
+  "returnCode": 0,
+  "error": null,
+  "detail": null,
+  "outputs": [
+    { "index": 1, "type": "StringBuilder", "value": "5A3E...", "isOutput": true }
+  ]
+}
+常用参数说明
+
+网络地址/口令使用 string=；端口为 ushort=；长度为 int=。
+若 DLL 不在当前目录，可加 --search-path C:\Path\To\dlls 或在脚本 searchPaths 中配置。
+调用后默认卸载 DLL；如需保持加载状态，追加 --keep-loaded。

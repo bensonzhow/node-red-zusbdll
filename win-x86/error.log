@@ -1,0 +1,88 @@
+[
+  {
+    "succeeded": true,
+    "command": "load",
+    "returnCode": 0,
+    "error": null,
+    "detail": null,
+    "outputs": []
+  },
+  {
+    "succeeded": true,
+    "command": "OpenUsbkey",
+    "returnCode": 0,
+    "error": null,
+    "detail": null,
+    "outputs": []
+  },
+  {
+    "succeeded": true,
+    "command": "LgServer",
+    "returnCode": 48,
+    "error": null,
+    "detail": null,
+    "outputs": [
+      {
+        "index": 0,
+        "type": "string",
+        "value": "22.58.244.70",
+        "isOutput": false
+      },
+      {
+        "index": 1,
+        "type": "ushort",
+        "value": 8001,
+        "isOutput": false
+      },
+      {
+        "index": 2,
+        "type": "int",
+        "value": 8,
+        "isOutput": false
+      },
+      {
+        "index": 3,
+        "type": "string",
+        "value": "11111111",
+        "isOutput": false
+      }
+    ]
+  },
+  {
+    "succeeded": true,
+    "command": "CreateRand",
+    "returnCode": 0,
+    "error": null,
+    "detail": null,
+    "outputs": [
+      {
+        "index": 0,
+        "type": "int",
+        "value": 16,
+        "isOutput": false
+      },
+      {
+        "index": 1,
+        "type": "StringBuilder",
+        "value": "8DA2898FC10E6BB8725D76703EF19447",
+        "isOutput": true
+      }
+    ]
+  },
+  {
+    "succeeded": true,
+    "command": "LgoutServer",
+    "returnCode": 64,
+    "error": null,
+    "detail": null,
+    "outputs": []
+  },
+  {
+    "succeeded": true,
+    "command": "unload",
+    "returnCode": 0,
+    "error": null,
+    "detail": null,
+    "outputs": []
+  }
+]
