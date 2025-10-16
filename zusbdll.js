@@ -399,5 +399,5 @@ module.exports = function (RED) {
         });
     }
 
-    RED.nodes.registerType("zdll", zdll);
+    RED.nodes.registerType("zusbdll", zdll);
 };

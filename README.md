@@ -1,7 +1,3 @@
-node red z log
+node red usb key
 
-捕获节点消息
-
-日志处理
-
-![node-red-zudp](images/image.png)
+调用USB加密狗
