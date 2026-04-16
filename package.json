@@ -1,6 +1,6 @@
 {
   "name": "node-red-zusbdll",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "description": "node-red usb key load dll node",
   "main": "index.js",
   "scripts": {

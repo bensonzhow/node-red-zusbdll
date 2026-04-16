@@ -1,7 +1,7 @@
 命令范例
 
 OpenUsbkey: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEncryptionMachine\WinSocketServer.dll --function OpenUsbkey
-LgServer: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEncryptionMachine\WinSocketServer.dll --function LgServer --arg string=22.58.244.70 --arg ushort=8001 --arg int=8 --arg string=11111111
+LgServer: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEncryptionMachine\WinSocketServer.dll --function LgServer --arg string=127.0.0.1 --arg ushort=8001 --arg int=8 --arg string=11111111
 LgoutServer: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEncryptionMachine\WinSocketServer.dll --function LgoutServer
 CreateRand: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEncryptionMachine\WinSocketServer.dll --function CreateRand --return int --arg int=16 --arg StringBuilder[1024]=
 脚本执行
@@ -12,7 +12,7 @@ CreateRand: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEnc
   "commands": [
     { "type": "load", "path": "./EncryptionMachine/ServerModelEncryptionMachine/WinSocketServer.dll", "alias": "WinSocket" },
     { "type": "call", "alias": "WinSocket", "function": "OpenUsbkey" },
-    { "type": "call", "alias": "WinSocket", "function": "LgServer", "args": ["string=22.58.244.70", "ushort=8001", "int=8", "string=11111111"] },
+    { "type": "call", "alias": "WinSocket", "function": "LgServer", "args": ["string=127.0.0.1", "ushort=8001", "int=8", "string=11111111"] },
     { "type": "call", "alias": "WinSocket", "function": "CreateRand", "args": ["int=16", "StringBuilder[1024]="] },
     { "type": "call", "alias": "WinSocket", "function": "LgoutServer" },
     { "type": "unload", "alias": "WinSocket" }
