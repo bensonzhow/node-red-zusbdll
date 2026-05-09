@@ -1,0 +1,2 @@
+E:\exe\zworks\zdll\zdll\bin\Release\net6.0\publish\win-x86\zdll.pdb
+E:\exe\zworks\zdll\zdll\bin\Release\net6.0\publish\win-x86\zdll.exe

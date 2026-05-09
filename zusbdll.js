@@ -1,43 +1,39 @@
+// zusbdll.js - 生产环境版本（支持会话复用、requestId、崩溃恢复、超时、优雅关闭）
+
+const { spawn } = require("child_process");
+const fs = require("fs");
+const fsp = require("fs/promises");
+const os = require("os");
+const path = require("path");
+
+// ===== 配置 =====
+const EXECUTABLE_NAME = "zdll.exe";
+const EXECUTABLE_DIR = path.join(__dirname, "win-x86");
+const EXECUTABLE_PATH = path.join(EXECUTABLE_DIR, EXECUTABLE_NAME);
+const DEFAULT_ALIAS = "WinSocket";
+const DEFAULT_DLL_RELATIVE = "./ServerModelEncryptionMachine/WinSocketServer.dll";
+const DEFAULT_SEARCH_PATHS = ["./ServerModelEncryptionMachine"];
+const SESSION_TIMEOUT = 600_000; // 5分钟空闲超时
+const CALL_TIMEOUT = 60_000; // 单次调用超时 30秒
+
+// ===== 全局会话管理 =====
+const SESSIONS = new Map(); // key: alias, value: session object
+
 module.exports = function (RED) {
     "use strict";
 
-    const { spawn } = require("child_process");
-    const fs = require("fs");
-    const fsp = require("fs/promises");
-    const os = require("os");
-    const path = require("path");
-
-    const EXECUTABLE_NAME = "zdll.exe";
-    const EXECUTABLE_DIR = path.join(__dirname, "win-x86");
-    const EXECUTABLE_PATH = path.join(EXECUTABLE_DIR, EXECUTABLE_NAME);
-    const DEFAULT_SCENARIO_PATH = path.join(EXECUTABLE_DIR, "scenario.json");
-    const DEFAULT_ALIAS = "WinSocket";
-    const DEFAULT_DLL_RELATIVE = "./ServerModelEncryptionMachine/WinSocketServer.dll";
-    const DEFAULT_SEARCH_PATHS = ["./ServerModelEncryptionMachine"];
-
+    // ===== 工具函数 =====
     function normaliseArgs(args) {
-        if (!Array.isArray(args)) {
-            return undefined;
-        }
-        return args.map((arg) => {
-            if (arg === null || arg === undefined) {
-                return "";
-            }
-            if (typeof arg === "string") {
-                return arg;
-            }
+        if (!Array.isArray(args)) return undefined;
+        return args.map(arg => {
+            if (arg === null || arg === undefined) return "";
+            if (typeof arg === "string") return arg;
             if (typeof arg === "object") {
-                if (Object.prototype.hasOwnProperty.call(arg, "raw")) {
-                    return String(arg.raw);
-                }
+                if (Object.prototype.hasOwnProperty.call(arg, "raw")) return String(arg.raw);
                 const type = arg.type || arg.t;
                 const value = arg.value;
-                if (!type) {
-                    throw new Error("Argument objects must include a type property.");
-                }
-                if (value === undefined || value === null) {
-                    return `${type}=`;
-                }
+                if (!type) throw new Error("Argument objects must include a type property.");
+                if (value === undefined || value === null) return `${type}=`;
                 return `${type}=${value}`;
             }
             return String(arg);
@@ -45,357 +41,414 @@ module.exports = function (RED) {
     }
 
     function normaliseDllPath(dll) {
-        if (!dll) {
-            return DEFAULT_DLL_RELATIVE;
-        }
-        if (path.isAbsolute(dll)) {
-            return dll;
-        }
-        if (/[\\/]/.test(dll)) {
-            return dll;
-        }
+        if (!dll) return DEFAULT_DLL_RELATIVE;
+        if (path.isAbsolute(dll)) return dll;
+        if (/[\\/]/.test(dll)) return dll;
         return `./ServerModelEncryptionMachine/${dll}`;
     }
 
-    function normaliseScenario(scenario) {
-        if (!scenario || typeof scenario !== "object") {
-            throw new Error("Scenario definition must be an object.");
-        }
-        const searchPaths = Array.isArray(scenario.searchPaths) && scenario.searchPaths.length > 0
-            ? scenario.searchPaths
-            : DEFAULT_SEARCH_PATHS;
-        const commands = (scenario.commands || []).map((command) => {
-            if (!command || typeof command !== "object") {
-                throw new Error("Each scenario command must be an object.");
-            }
-            const copy = { ...command };
-            if (Array.isArray(copy.args)) {
-                copy.args = normaliseArgs(copy.args);
-            }
-            return copy;
-        });
-        if (commands.length === 0) {
-            throw new Error("Scenario requires at least one command.");
-        }
-        return { searchPaths, commands };
-    }
-
-    function buildScenarioFromControl(control) {
-        if (!control || typeof control !== "object") {
-            return null;
-        }
-
-        if (control.scenario && typeof control.scenario === "object") {
-            return normaliseScenario(control.scenario);
-        }
-
-        if (Array.isArray(control)) {
-            return normaliseScenario({ commands: control });
-        }
-
-        if (Array.isArray(control.commands)) {
-            return normaliseScenario({
-                searchPaths: control.searchPaths,
-                commands: control.commands
-            });
-        }
-
-        const relevantKeys = [
-            "function",
-            "calls",
-            "dll",
-            "dllPath",
-            "keepLoaded",
-            "openUsbkey",
-            "logout",
-            "alias",
-            "openArgs",
-            "logoutArgs"
-        ];
-        const shouldBuild = relevantKeys.some((key) => Object.prototype.hasOwnProperty.call(control, key));
-        if (!shouldBuild) {
-            return null;
-        }
-
+    // ===== 启动 serve 进程 + 执行初始化 =====
+    async function startServeProcess(control, node) {
         const alias = control.alias || DEFAULT_ALIAS;
         const dllPath = normaliseDllPath(control.dllPath || control.dll);
-        const searchPaths = Array.isArray(control.searchPaths) && control.searchPaths.length > 0
-            ? control.searchPaths
-            : DEFAULT_SEARCH_PATHS;
-        const commands = [];
+        const searchPaths = Array.isArray(control.searchPaths) ? control.searchPaths : DEFAULT_SEARCH_PATHS;
 
-        commands.push({ type: "load", path: dllPath, alias });
-
-        const openUsbkey = control.openUsbkey !== false;
-        if (openUsbkey) {
-            const openFunction = control.openFunction || "OpenUsbkey";
-            commands.push({
-                type: "call",
-                alias,
-                function: openFunction,
-                args: normaliseArgs(control.openArgs)
-            });
-        }
-
-        const callList = Array.isArray(control.calls) ? control.calls.slice() : [];
-        if (control.function) {
-            callList.unshift({ function: control.function, args: control.args, alias: control.callAlias });
-        }
-
-        callList.forEach((call) => {
-            if (!call || typeof call !== "object") {
-                throw new Error("Each call entry must be an object.");
-            }
-            if (!call.function) {
-                throw new Error("Call entry missing function name.");
-            }
-            const callAlias = call.alias || alias;
-            commands.push({
-                type: "call",
-                alias: callAlias,
-                function: call.function,
-                args: normaliseArgs(call.args)
-            });
+        const args = ["serve", "--dll", dllPath, "--alias", alias];
+        searchPaths.forEach(sp => {
+            args.push("--search-path", sp);
         });
 
-        const logout = control.logout !== false;
-        if (logout) {
-            const logoutFunction = control.logoutFunction || "LgoutServer";
-            commands.push({
-                type: "call",
-                alias,
-                function: logoutFunction,
-                args: normaliseArgs(control.logoutArgs)
-            });
-        }
+        const child = spawn(EXECUTABLE_PATH, args, {
+            cwd: EXECUTABLE_DIR,
+            windowsHide: true,
+            stdio: ["pipe", "pipe", "pipe"]
+        });
 
-        const keepLoaded = control.keepLoaded === true;
-        if (!keepLoaded) {
-            commands.push({ type: "unload", alias });
-        }
+        const pendingRequests = new Map();
+        let stdoutBuffer = "";
 
-        return normaliseScenario({ searchPaths, commands });
-    }
+        // 处理 stdout
+        child.stdout.on("data", chunk => {
 
-    async function writeScenarioFile(scenario) {
-        const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "zusbdll-"));
-        const scenarioPath = path.join(dir, "scenario.json");
-        await fsp.writeFile(scenarioPath, JSON.stringify(scenario, null, 2), "utf8");
-        const cleanup = async () => {
-            try {
-                if (fsp.rm) {
-                    await fsp.rm(dir, { recursive: true, force: true });
-                } else {
-                    await fsp.rmdir(dir, { recursive: true });
+            stdoutBuffer += chunk.toString();
+
+            const endsWithNewline = stdoutBuffer.endsWith('\n') || stdoutBuffer.endsWith('\r');
+
+
+            const lines = stdoutBuffer.split(/\r?\n/);
+
+            const completeLines = endsWithNewline ? lines : lines.slice(0, -1);
+
+
+            stdoutBuffer = endsWithNewline ? "" : lines[lines.length - 1] || "";
+
+            for (const line of lines) {
+                if (!line.trim()) continue;
+                try {
+                    const obj = JSON.parse(line);
+                    if (obj.command === 'serve' && obj.succeeded === 'true') {
+                        child.stdout.removeListener('data', online);
+                        clearTimeout(timeout);
+                        resove();
+                        return;
+                    }
+
+                    if (obj.requestId) {
+                        const req = pendingRequests.get(obj.requestId);
+                        if (req) {
+                            clearTimeout(req.timeoutId);
+                            pendingRequests.delete(obj.requestId);
+                            req.resolve(obj.result);
+                        }
+                    }
+                } catch (e) {
+                    // ignore parse errors
                 }
-            } catch (err) {
-                // ignore cleanup errors
-            }
-        };
-        return { path: scenarioPath, cleanup };
-    }
-
-    async function resolveScenarioPath(candidate) {
-        const scenarioPath = path.isAbsolute(candidate)
-            ? candidate
-            : path.join(EXECUTABLE_DIR, candidate);
-        await fsp.access(scenarioPath, fs.constants.F_OK);
-        return scenarioPath;
-    }
-
-    async function prepareScenario(control) {
-        if (control === null || control === undefined) {
-            return { path: DEFAULT_SCENARIO_PATH, cleanup: null };
-        }
-
-        if (typeof control === "string") {
-            const scenarioPath = await resolveScenarioPath(control);
-            return { path: scenarioPath, cleanup: null };
-        }
-
-        if (typeof control === "object") {
-            if (control.scenarioFile || control.file || control.path) {
-                const scenarioPath = await resolveScenarioPath(control.scenarioFile || control.file || control.path);
-                return { path: scenarioPath, cleanup: null };
-            }
-
-            const scenario = buildScenarioFromControl(control);
-            if (scenario) {
-                return writeScenarioFile(scenario);
-            }
-        }
-
-        return { path: DEFAULT_SCENARIO_PATH, cleanup: null };
-    }
-
-    function parseOutput(stdout) {
-        const trimmed = stdout ? stdout.trim() : "";
-        if (!trimmed) {
-            return { primary: null, json: [], text: "" };
-        }
-
-        const lines = trimmed.split(/\r?\n/);
-        const jsonEntries = [];
-        const textEntries = [];
-
-        lines.forEach((line) => {
-            const candidate = line.trim();
-            if (!candidate) {
-                return;
-            }
-            try {
-                jsonEntries.push(JSON.parse(candidate));
-            } catch (err) {
-                textEntries.push(line);
             }
         });
 
-        let primary = null;
-        if (jsonEntries.length === 1 && textEntries.length === 0) {
-            primary = jsonEntries[0];
-        } else if (jsonEntries.length > 0) {
-            primary = jsonEntries;
-        } else {
-            primary = textEntries.join(os.EOL);
-        }
+        // 转发 stderr
+        child.stderr.on("data", chunk => {
+            const msg = chunk.toString().trim();
+            if (msg) RED.log.warn(`[zusbdll] stderr: ${msg}`);
+        });
 
-        return { primary, json: jsonEntries, text: textEntries.join(os.EOL) };
-    }
+        // 监听退出
+        child.on("exit", (code, signal) => {
+            RED.log.warn(`[zusbdll] serve process exited (alias: ${alias}, code: ${code}, signal: ${signal})`);
+            cleanupSession(alias);
+        });
 
-    function runExecutable(args) {
-        return new Promise((resolve, reject) => {
-            const child = spawn(EXECUTABLE_PATH, args, {
-                cwd: EXECUTABLE_DIR,
-                windowsHide: true
-            });
-            let stdout = "";
-            let stderr = "";
-
-            child.stdout.on("data", (chunk) => {
-                stdout += chunk.toString();
-            });
-
-            child.stderr.on("data", (chunk) => {
-                stderr += chunk.toString();
-            });
-
-            child.on("error", (err) => {
+        // ===== 等待 serve 启动成功 =====
+        await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("Serve startup timeout")), 5000);
+            const onLine = (chunk) => {
+                stdoutBuffer += chunk.toString();
+                const endsWithNewline = stdoutBuffer.endsWith('\n') || stdoutBuffer.endsWith('\r');
+                const lines = stdoutBuffer.split(/\r?\n/);
+                const completeLines = endsWithNewline ? lines : lines.slice(0, -1);
+                stdoutBuffer = endsWithNewline ? "" : lines[lines.length - 1] || "";
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const obj = JSON.parse(line);
+                        if (obj.command === "serve" && obj.succeeded) {
+                            child.stdout.removeListener("data", onLine);
+                            clearTimeout(timeout);
+                            resolve();
+                        }
+                    } catch (e) { }
+                }
+            };
+            child.stdout.on("data", onLine);
+            child.once("error", (err) => {
+                clearTimeout(timeout);
                 reject(err);
             });
+        });
+        // ===== 执行初始化调用 =====
+        // 默认初始化序列
+        const defaultInitCalls = [
+            { function: "OpenUsbkey" },
+            //{ function: "LgServer", args: control.args || [] }
+        ];
 
-            child.on("close", (code) => {
-                resolve({ code, stdout, stderr });
+        // 用户可覆盖
+        const initCalls = control.initCalls || defaultInitCalls;
+
+        for (const call of initCalls) {
+            if (!call.function) continue;
+            const cmd = {
+                action: "call",
+                function: call.function,
+                returnType: call.returnType || "int",
+                args: normaliseArgs(call.args)
+            };
+            await sendServeCommandDirect(child, pendingRequests, cmd);
+        }
+
+        return { child, pendingRequests, alias };
+    }
+
+    // 辅助函数：直接发送命令（用于初始化阶段）
+    function sendServeCommandDirect(child, pendingRequests, command) {
+        return new Promise((resolve, reject) => {
+            const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+            const timeoutId = setTimeout(() => {
+                pendingRequests.delete(requestId);
+                reject(new Error(`Initialization timeout after ${CALL_TIMEOUT}ms`));
+            }, CALL_TIMEOUT);
+
+            pendingRequests.set(requestId, { resolve, reject, timeoutId });
+            const cmdWithId = { ...command, requestId };
+            child.stdin.write(JSON.stringify(cmdWithId) + "\n", err => {
+                if (err) {
+                    pendingRequests.delete(requestId);
+                    clearTimeout(timeoutId);
+                    reject(err);
+                }
             });
         });
     }
 
+    // ===== 发送命令（带 requestId 和超时）=====
+    async function sendServeCommand(session, command) {
+        const requestId = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        return new Promise((resolve, reject) => {
+            if (!session.child.stdin.writable) {
+                return reject(new Error("Serve process stdin is not writable (process may have exited)"));
+            }
+
+            const timeoutId = setTimeout(() => {
+                session.pendingRequests.delete(requestId);
+                reject(new Error(`Call timeout after ${CALL_TIMEOUT}ms`));
+            }, CALL_TIMEOUT);
+
+            session.pendingRequests.set(requestId, { resolve, reject, timeoutId });
+            const cmdWithId = { ...command, requestId };
+            session.child.stdin.write(JSON.stringify(cmdWithId) + "\n", err => {
+                if (err) {
+                    session.pendingRequests.delete(requestId);
+                    clearTimeout(timeoutId);
+                    reject(err);
+                }
+            });
+        });
+    }
+
+    // ===== 清理会话 =====
+    function cleanupSession(alias) {
+        const session = SESSIONS.get(alias);
+        if (session) {
+            SESSIONS.delete(alias);
+            // 尝试优雅退出
+            try {
+                if (session.child.stdin.writable) {
+                    session.child.stdin.end(JSON.stringify({ action: "exit" }) + "\n");
+                }
+            } catch (e) { }
+            // 强制 kill（如果还在运行）
+            try {
+                session.child.kill();
+            } catch (e) { }
+            // 清理 pending requests
+            for (const [id, req] of session.pendingRequests) {
+                clearTimeout(req.timeoutId);
+                req.reject(new Error("Session terminated"));
+            }
+        }
+    }
+
+    // ===== 节点定义 =====
     function zdll(config) {
         RED.nodes.createNode(this, config);
         const node = this;
 
         node.on("input", async function onInput(msg, send, done) {
-            send = send || function defaultSend() { node.send.apply(node, arguments); };
+            send = send || ((...args) => node.send(...args));
 
+            // 平台检查
             if (process.platform !== "win32") {
-                const err = new Error("zdll node requires Windows to execute zdll.exe (win-x86 target).");
+                const err = new Error("zdll node requires Windows to execute zdll.exe");
                 node.status({ fill: "red", shape: "ring", text: "unsupported platform" });
                 node.error(err, msg);
-                if (done) {
-                    done(err);
-                }
+                if (done) done(err);
                 return;
             }
 
+            // 检查可执行文件
             try {
                 await fsp.access(EXECUTABLE_PATH, fs.constants.F_OK);
             } catch (accessErr) {
                 const err = new Error(`zdll executable not found at ${EXECUTABLE_PATH}`);
                 node.status({ fill: "red", shape: "ring", text: "missing zdll.exe" });
                 node.error(err, msg);
-                if (done) {
-                    done(err);
-                }
+                if (done) done(err);
                 return;
             }
 
             const control = msg.zdllConfig || msg.zdll || msg.payload;
-            let scenarioInfo;
-
-            try {
-                scenarioInfo = await prepareScenario(control);
-            } catch (scenarioErr) {
-                node.status({ fill: "red", shape: "ring", text: "invalid scenario" });
-                node.error(scenarioErr, msg);
-                if (done) {
-                    done(scenarioErr);
-                }
+            if (!control || typeof control !== "object") {
+                const err = new Error("Invalid control object");
+                node.status({ fill: "red", shape: "ring", text: "invalid input" });
+                node.error(err, msg);
+                if (done) done(err);
                 return;
             }
 
-            let cleanup = null;
-            if (scenarioInfo.cleanup) {
-                cleanup = scenarioInfo.cleanup;
+            const alias = control.alias || DEFAULT_ALIAS;
+            let session = SESSIONS.get(alias);
+
+
+            // 处理特殊命令（exit/unload）
+            if (control.action === "exit" || control.function === "exit") {
+                if (session) {
+                    try {
+                        // 发送 exit 命令
+                        await new Promise((resolve, reject) => {
+                            const cmd = { action: "exit" };
+                            session.child.stdin.write(JSON.stringify(cmd) + "\n", err => {
+                                if (err) reject(err);
+                                else resolve();
+                            });
+                        });
+                        node.status({ fill: "green", shape: "dot", text: "exited" });
+                        send(msg);
+                    } catch (err) {
+                        node.error(err, msg);
+                    }
+                } else {
+                    // node.warn(`No active session for alias: ${alias}`);
+                    send(msg);
+                }
+                if (done) done();
+                return;
             }
 
-            node.status({ fill: "blue", shape: "dot", text: "executing" });
-
-            try {
-                const args = ["run", scenarioInfo.path];
-                const result = await runExecutable(args);
-                const parsed = parseOutput(result.stdout);
-
-                msg.zdll = {
-                    exitCode: result.code,
-                    stdout: result.stdout,
-                    stderr: result.stderr,
-                    scenario: scenarioInfo.path,
-                    parsed: parsed.json
-                };
-
-                if (parsed.primary !== null) {
-                    msg.payload = parsed.primary;
-                } else {
-                    msg.payload = result.stdout;
-                }
-
-                if (result.stderr) {
-                    node.warn(result.stderr.trim());
-                }
-
-                if (result.code !== 0) {
-                    const err = new Error(`zdll.exe exited with code ${result.code}`);
-                    node.status({ fill: "red", shape: "ring", text: `exit ${result.code}` });
-                    node.error(err, msg);
-                    if (done) {
-                        done(err);
+            if (control.action === "unload" || control.function === "unload") {
+                if (session) {
+                    try {
+                        const result = await sendServeCommand(session, { action: "unload" });
+                        msg.payload = result;
+                        node.status({ fill: "green", shape: "dot", text: "unloaded" });
+                        send(msg);
+                    } catch (err) {
+                        node.error(err, msg);
                     }
+                } else {
+                    // node.warn(`No active session for alias: ${alias}`);
+                    send(msg);
+                }
+                if (done) done();
+                return;
+            }
+
+            // 创建新会话（仅首次）
+            if (!session) {
+                try {
+                    const newSession = await startServeProcess(control, node);
+                    //node.warn(newSession)
+                    SESSIONS.set(alias, newSession);
+
+                    session = newSession;
+
+                    const timeoutId = setTimeout(() => {
+                        if (SESSIONS.get(alias) === session) {
+                            cleanupSession(alias);
+                        }
+                    }, SESSION_TIMEOUT);
+                    session.timeoutId = timeoutId;
+                } catch (err) {
+                    node.status({ fill: "red", shape: "ring", text: "spawn failed" });
+                    node.error(err, msg);
+                    if (done) done(err);
                     return;
                 }
+            } else {
+                // 更新空闲超时
+                clearTimeout(session.timeoutId);
+                session.timeoutId = setTimeout(() => {
+                    if (SESSIONS.get(alias) === session) {
+                        cleanupSession(alias);
+                    }
+                }, SESSION_TIMEOUT);
+            }
 
-                node.status({ fill: "green", shape: "dot", text: "done" });
-                send(msg);
-                if (done) {
-                    done();
-                }
-            } catch (err) {
-                node.status({ fill: "red", shape: "ring", text: err.message });
-                node.error(err, msg);
-                if (done) {
-                    done(err);
-                }
-            } finally {
-                if (cleanup) {
+            // 构造调用命令
+            // ===== 支持 calls 数组 =====
+            let results = [];
+            let allSucceeded = true;
+
+            if (Array.isArray(control.calls) && control.calls.length > 0) {
+                // 批量调用模式
+                node.status({ fill: "blue", shape: "dot", text: `calling ${control.calls.length}...` });
+
+                for (const call of control.calls) {
+                    if (!call || typeof call !== "object" || !call.function) {
+                        const err = new Error("Each call must be an object with 'function'");
+                        node.error(err, msg);
+                        if (done) done(err);
+                        return;
+                    }
+
+                    const serveCmd = {
+                        action: "call",
+                        function: call.function,
+                        returnType: call.returnType || "int",
+                        args: normaliseArgs(call.args)
+                    };
+
                     try {
-                        await cleanup();
-                    } catch (cleanupErr) {
-                        node.warn(`Failed to clean temporary scenario: ${cleanupErr.message}`);
+                        const resultJson = await sendServeCommand(session, serveCmd);
+                        results.push(resultJson);
+                        if (!resultJson?.succeeded) allSucceeded = false;
+                    } catch (err) {
+                        node.status({ fill: "red", shape: "ring", text: "batch call error" });
+                        node.error(err, msg);
+                        if (done) done(err);
+                        return;
                     }
                 }
+            } else if (control.function) {
+                // 单次调用模式（原有逻辑）
+                node.status({ fill: "blue", shape: "dot", text: "calling..." });
+
+                const serveCmd = {
+                    action: "call",
+                    function: control.function,
+                    returnType: control.returnType || "int",
+                    args: normaliseArgs(control.args)
+                };
+
+                try {
+                    const resultJson = await sendServeCommand(session, serveCmd);
+                    results = [resultJson];
+                    allSucceeded = resultJson?.succeeded === true;
+                } catch (err) {
+                    node.status({ fill: "red", shape: "ring", text: "timeout/error" });
+                    node.error(err, msg);
+                    if (done) done(err);
+                    return;
+                }
+            } else {
+                const err = new Error("Missing 'function' or 'calls' in control");
+                node.status({ fill: "red", shape: "ring", text: "no function/calls" });
+                node.error(err, msg);
+                if (done) done(err);
+                return;
             }
+
+            // ===== 构造输出 =====
+            const exitCode = allSucceeded ? 0 : 1;
+            msg.zdll = {
+                exitCode,
+                stdout: JSON.stringify(results, null, 2),
+                stderr: "",
+                scenario: "interactive",
+                parsed: results
+            };
+            msg.payload = results.length === 1 ? results[0] : results;
+
+            if (!allSucceeded) {
+                const firstError = results.find(r => !r.succeeded)?.error || 'unknown error';
+                const err = new Error(`Batch call failed: ${firstError}`);
+                node.status({ fill: "red", shape: "ring", text: "batch failed" });
+                node.error(err, msg);
+                if (done) done(err);
+                return;
+            }
+
+            node.status({ fill: "green", shape: "dot", text: "done" });
+            send(msg);
+            if (done) done();
         });
 
+        // 优雅关闭
         node.on("close", () => {
             node.status({});
+            for (const alias of SESSIONS.keys()) {
+                cleanupSession(alias);
+            }
         });
     }
 
