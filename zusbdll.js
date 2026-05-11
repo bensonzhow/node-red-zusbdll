@@ -115,7 +115,7 @@ module.exports = function (RED) {
 
         // 监听退出
         child.on("exit", (code, signal) => {
-            RED.log.warn(`[zusbdll] serve process exited (alias: ${alias}, code: ${code}, signal: ${signal})`);
+            //RED.log.warn(`[zusbdll] serve process exited (alias: ${alias}, code: ${code}, signal: ${signal})`);
             cleanupSession(alias);
         });
 

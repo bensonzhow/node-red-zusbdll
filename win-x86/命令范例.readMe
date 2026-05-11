@@ -46,3 +46,39 @@ CreateRand: UniversalDllLoader.exe call --dll .\EncryptionMachine\ServerModelEnc
 网络地址/口令使用 string=；端口为 ushort=；长度为 int=。
 若 DLL 不在当前目录，可加 --search-path C:\Path\To\dlls 或在脚本 searchPaths 中配置。
 调用后默认卸载 DLL；如需保持加载状态，追加 --keep-loaded。
+
+
+
+zdll.exe serve --dll .\ServerModelEncryptionMachine\WinSocketServer.dll --alias WinSocket
+{
+  "succeeded": true,
+  "command": "serve",
+  "returnCode": 0,
+  "error": null,
+  "detail": null,
+  "outputs": []
+}
+
+
+{"action":"call","function":"OpenUsbkey","requestId":"1"}
+{"requestId":"1","result":{"succeeded":true,"command":"OpenUsbkey",...}}
+
+{"action":"call","function":"LgServer","args":["string=22.58.244.70","ushort=8001","int=8","string=11111111"],"requestId":"2"}
+{
+  "action": "call",
+  "function": "Obj_Meter_Formal_InitSession",
+  "args": [
+    "int=1",
+    "string=00000000000",
+    "string=000001",
+    "string=01",
+    "StringBuilder[255]=",
+    "StringBuilder[255]=",
+    "StringBuilder[255]="
+  ],
+  "requestId": "3"
+}
+
+
+退出 serve 模式
+{"action":"exit"}
